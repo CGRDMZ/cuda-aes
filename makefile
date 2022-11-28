@@ -1,8 +1,9 @@
-
-
 run: build
 	./build/aes
 
-build:
-	mkdir build
+build: aes.cu
+	mkdir -p build
 	nvcc aes.cu -o build/aes
+
+clean:
+	rm -rf ./build
