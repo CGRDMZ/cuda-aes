@@ -51,13 +51,6 @@ __constant__ BYTE sbox[256];
 __constant__ BYTE inv_sbox[256];
 
 
-__device__ void inv_sub_bytes(BYTE* state) {
-    for (int i = 0; i < 16; i++)
-    {
-        state[i] = inv_sbox[state[i]];
-    }
-}
-
 __device__ void sub_bytes(BYTE* state) {
     for (int i = 0; i < 16; i++)
     {
@@ -66,15 +59,88 @@ __device__ void sub_bytes(BYTE* state) {
 }
 
 
-__global__ void run_aes(BYTE* in) {
+__device__ void inv_sub_bytes(BYTE* state) {
+    for (int i = 0; i < 16; i++)
+    {
+        state[i] = inv_sbox[state[i]];
+    }
+}
+
+__device__ void shift_row(BYTE* state) {
+    BYTE out[16];
+    
+    out[0] = state[0];
+    out[1] = state[1];
+    out[2] = state[2];
+    out[3] = state[3];
+
+
+    out[4] = state[5];
+    out[5] = state[6];
+    out[6] = state[7];
+    out[7] = state[4];
+
+
+    out[8] = state[10];
+    out[9] = state[11];
+    out[10] = state[8];
+    out[11] = state[9];
+
+
+    out[12] = state[15];
+    out[13] = state[12];
+    out[14] = state[13];
+    out[15] = state[14];
+
+    for (int i = 0; i < 16; i++)
+    {
+        state[i] = out[i];
+    }
+}
+
+
+__device__ void inv_shift_row(BYTE* state) {
+    BYTE out[16];
+    
+    out[0] = state[0];
+    out[1] = state[1];
+    out[2] = state[2];
+    out[3] = state[3];
+
+
+    out[4] = state[7];
+    out[5] = state[4];
+    out[6] = state[5];
+    out[7] = state[6];
+
+
+    out[8] = state[10];
+    out[9] = state[11];
+    out[10] = state[8];
+    out[11] = state[9];
+
+
+    out[12] = state[13];
+    out[13] = state[14];
+    out[14] = state[15];
+    out[15] = state[12];
+
+    for (int i = 0; i < 16; i++)
+    {
+        state[i] = out[i];
+    }
+}
+
+__global__ void run_aes(BYTE* state) {
     
     int idx = threadIdx.x;
 
-    sub_bytes(in);
-    inv_sub_bytes(in);
+    // sub_bytes(in);
+    // inv_sub_bytes(in);
 
+    shift_row(state);
+    inv_shift_row(state);
 
-    
 }
 
 void checkCudaErr(cudaError_t err) {
@@ -98,7 +164,7 @@ int main() {
 
     checkCudaErr(cudaMallocManaged(&in, sizeof(BYTE) * n));
     
-    int inc = 0x10;
+    int inc = 0x0;
     for (int i = 0; i < n; i++)
     {
         in[i] = inc;
