@@ -94,6 +94,30 @@ __device__ void inv_sub_bytes(BYTE* state) {
 __device__ void shift_row(BYTE* state) {
     BYTE out[16];
     
+    // // first row
+    // out[0] = state[0];
+    // out[4] = state[4];
+    // out[8] = state[8];
+    // out[12] = state[12];
+
+
+    // out[1] = state[5];
+    // out[5] = state[9];
+    // out[9] = state[13];
+    // out[13] = state[1];
+
+
+    // out[2] = state[10];
+    // out[6] = state[14];
+    // out[10] = state[2];
+    // out[14] = state[6];
+
+
+    // out[3] = state[15];
+    // out[7] = state[3];
+    // out[11] = state[7];
+    // out[15] = state[11];
+
     out[0] = state[0];
     out[1] = state[1];
     out[2] = state[2];
@@ -179,62 +203,118 @@ __device__ void mixColumns(BYTE* state) {
 
 __device__ void inv_mixColumns(BYTE* state) {}
 
-__global__ void run_aes(BYTE* state) {
+__device__ void addRoundKey(BYTE* state, BYTE* rk) {
+    for (int i = 0; i < 16; i++)
+    {
+        state[i] ^= rk[i];
+    }
+}
+
+__device__ void printRoundKey(BYTE* state) {
+    printf("Rndky: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%x ", state[i]);
+    }
+    printf("\n");
+}
+
+__device__ void printShiftRow(BYTE* state) {
+    printf("Shift row: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%x ", state[i]);
+    }
+    printf("\n");
+}
+
+__device__ void printState(BYTE* state) {
+    printf("State: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%x ", state[i]);
+    }
+    printf("\n");
+}
+
+__device__ void printMixColumn(BYTE* state) {
+    printf("Mix col: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%x ", state[i]);
+    }
+    printf("\n");
+}
+
+__global__ void run_aes(BYTE* state, BYTE* ek) {
     
     int idx = threadIdx.x;
 
-    // inv_shift_row(state);
+    
+    printState(state);
+    printRoundKey(ek);
+    addRoundKey(state, ek);
+
+
+    for (int i = 1; i < 14 - 1; i++)
+    {
+        printState(state);
+        sub_bytes(state);
+        shift_row(state);
+        printShiftRow(state);
+        mixColumns(state);
+        printMixColumn(state);
+        addRoundKey(state, ek + i * 16);
+
+        printRoundKey(ek + i * 16);
+    }
+    
+    printState(state);
 
     sub_bytes(state);
     shift_row(state);
-    mixColumns(state);
+    addRoundKey(state, ek + 224);
     
-
-    // inv_sub_bytes(state);
+    printRoundKey(ek + 224);
 
 }
 
 void checkCudaErr(cudaError_t err) {
-    if (err != cudaSuccess) 
+    if (err != cudaSuccess)
     {
         exit(err);
     };
 }
 
 
-// Auxiliary function for KeyExpansion
-void KeyExpansionCore(unsigned char * in, unsigned char i) {
-	// Rotate left by one byte: shift left 
+
+
+void KeyExpansionCore(BYTE * in, BYTE i) {
 	unsigned char t = in[0];
 	in[0] = in[1];
 	in[1] = in[2];
 	in[2] = in[3];
 	in[3] = t;
 
-	// S-box 4 bytes 
+
 	in[0] = s_box[in[0]];
 	in[1] = s_box[in[1]];
 	in[2] = s_box[in[2]];
 	in[3] = s_box[in[3]];
 
-	// RCon
 	in[0] ^= Rcon_h[i];
 }
 
-/* The main KeyExpansion function
- * Generates additional keys using the original key
- * Total of 11 128-bit keys generated, including the original
- * Keys are stored one after the other in expandedKeys
- */
-void KeyExpansion(unsigned char inputKey[32], unsigned char expandedKeys[240]) {
-	// The first 128 bits are the original key
+
+void expandKey(BYTE* inputKey, BYTE* expandedKeys) {
+
 	for (int i = 0; i < 32; i++) {
 		expandedKeys[i] = inputKey[i];
 	}
 
-	int bytesGenerated = 32; // Bytes we've generated so far
-	int rconIteration = 1; // Keeps track of rcon value
-	unsigned char tmpCore[4]; // Temp storage for core
+	int bytesGenerated = 32;
+	int rconIteration = 1;
+	unsigned char tmpCore[4];
 
 	while (bytesGenerated < 240) {
 		/* Read 4 bytes for the core
@@ -247,14 +327,29 @@ void KeyExpansion(unsigned char inputKey[32], unsigned char expandedKeys[240]) {
 
 		// Perform the core once for each 16 byte key
 		if (bytesGenerated % 32 == 0) {
-			KeyExpansionCore(tmpCore, rconIteration++);
-		} else if (bytesGenerated % 8 == 4) {
+            unsigned char t = tmpCore[0];
+            // rotate
+            tmpCore[0] = tmpCore[1];
+            tmpCore[1] = tmpCore[2];
+            tmpCore[2] = tmpCore[3];
+            tmpCore[3] = t;
+
+            // sbox
+            tmpCore[0] = s_box[tmpCore[0]];
+            tmpCore[1] = s_box[tmpCore[1]];
+            tmpCore[2] = s_box[tmpCore[2]];
+            tmpCore[3] = s_box[tmpCore[3]];
+
+            // xor
+            tmpCore[0] ^= Rcon_h[rconIteration++];
+
+		} else if (bytesGenerated % 32 == 16) {
             for (int i = 0; i < 4; i++) {
-			    tmpCore[i] = sbox[tmpCore[i]];
+			    tmpCore[i] = s_box[tmpCore[i]];
 		    }
         }
 
-		for (unsigned char a = 0; a < 4; a++) {
+		for (BYTE a = 0; a < 4; a++) {
 			expandedKeys[bytesGenerated] = expandedKeys[bytesGenerated - 32] ^ tmpCore[a];
 			bytesGenerated++;
 		}
@@ -266,14 +361,20 @@ void KeyExpansion(unsigned char inputKey[32], unsigned char expandedKeys[240]) {
 int main() {
 
 
+    // BYTE key[32] = {
+    //     0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81, 
+    //     0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
+
+
     BYTE key[32] = {
-        0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81, 
-        0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 
+ };
 
-    BYTE ek[240];
 
-    KeyExpansion(key, ek);
+    BYTE* ek;
+    checkCudaErr(cudaMallocManaged(&ek, sizeof(BYTE) * 240));
 
+    expandKey(key, ek);
 
     for (int i = 0; i < 240; i++)
     {
@@ -295,14 +396,18 @@ int main() {
 
     checkCudaErr(cudaMallocManaged(&in, sizeof(BYTE) * n));
     
+    // remove after testing
+    BYTE test[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, };
 
     fstream plainTextFile("./plaintext.txt");
     char c[16];
     plainTextFile.read(c, 16 * sizeof(char));
     for (int i = 0; i < 16; i++)
     {
-        in[i] = c[i];
+        in[i] = test[i];
     }
+
+
     
 
     // BYTE test[] = {
@@ -323,26 +428,32 @@ int main() {
     //     inc += 0x1;
     // }
     
-    for (int i = 0; i < n; i++)
-    {
-        printf("result index %d is %x  \n", i, in[i]);
-    }
+    // for (int i = 0; i < n; i++)
+    // {
+    //     printf("result index %d is %x  \n", i, in[i]);
+    // }
 
     std::cout << "--------- after aes ------------------" << std::endl;
     
 
-    run_aes<<<1,1>>>(in);
+    run_aes<<<1,1>>>(in, ek);
 
     cudaDeviceSynchronize();
 
-    for (int i = 0; i < n; i++)
+    printf("result: ");
+    for (int i = 0; i < 16; i++)
     {
-        printf("result index %d is %x  \n", i, in[i]);
+        printf("%x ", in[i]);
     }
+    printf("\n");
+
+    // for (int i = 0; i < n; i++)
+    // {
+    //     printf("result index %d is %x  \n", i, in[i]);
+    // }
 
     std::cout << std::endl;
     
-
     cudaFree(in);
 
     cudaDeviceReset();
