@@ -202,51 +202,63 @@ void checkCudaErr(cudaError_t err) {
 }
 
 
-void schedule_key(unsigned char *t, int rcon_i){
-	/* Rotate the word, to the left, meaning t[0] = t[1], t[1] = t[2], t[2] = t[3], t[3] = t[0] */ 
-    unsigned char temp;
-    temp = t[0];
-    for (int i = 0; i < 3; ++i){
-        t[i] = t[i+1];
-    }
-    t[3] = temp;
+// Auxiliary function for KeyExpansion
+void KeyExpansionCore(unsigned char * in, unsigned char i) {
+	// Rotate left by one byte: shift left 
+	unsigned char t = in[0];
+	in[0] = in[1];
+	in[1] = in[2];
+	in[2] = in[3];
+	in[3] = t;
 
-    
-    for(int i = 0; i < 4; ++i){ //iterate over the word, apply sbox to each byte
-    	t[i] = s_box[(t[i])];
+	// S-box 4 bytes 
+	in[0] = s_box[in[0]];
+	in[1] = s_box[in[1]];
+	in[2] = s_box[in[2]];
+	in[3] = s_box[in[3]];
 
-    }
-    t[0] = t[0] ^ Rcon_h[rcon_i]; //for only the left-most byte, XOR with the rcon value based on the rcon index
-
+	// RCon
+	in[0] ^= Rcon_h[i];
 }
 
-/* 	Expands the key
-	Theory implemented from https://en.wikipedia.org/wiki/Rijndael_key_schedule#The_key_schedule
-*/
-void expandKey(unsigned char *key, int key_size, unsigned char *expanded_key, int expanded_key_size){
-	int rcon_i = 1; //rcon iteration value
-	int current_size_of_key = 0; //stores the value of the current key size
-	unsigned char t[4] = {0}; //temp variable of size 4 bytes
-
-
-	for(int i = 0; i < key_size; ++i){ //copy the encryption key as the first 16 bytes in the extended key
-		expanded_key[i] = key[i];
-		current_size_of_key++;
+/* The main KeyExpansion function
+ * Generates additional keys using the original key
+ * Total of 11 128-bit keys generated, including the original
+ * Keys are stored one after the other in expandedKeys
+ */
+void KeyExpansion(unsigned char inputKey[32], unsigned char expandedKeys[240]) {
+	// The first 128 bits are the original key
+	for (int i = 0; i < 32; i++) {
+		expandedKeys[i] = inputKey[i];
 	}
-	while (current_size_of_key < expanded_key_size){ //loop until we meet the desired key size
-		for(int i = 0; i < 4; ++i){
-			t[i] = expanded_key[(current_size_of_key-4) + i]; //assign the value of the previous 4 bytes to t
+
+	int bytesGenerated = 32; // Bytes we've generated so far
+	int rconIteration = 1; // Keeps track of rcon value
+	unsigned char tmpCore[4]; // Temp storage for core
+
+	while (bytesGenerated < 240) {
+		/* Read 4 bytes for the core
+		* They are the previously generated 4 bytes
+		* Initially, these will be the final 4 bytes of the original key
+		*/
+		for (int i = 0; i < 4; i++) {
+			tmpCore[i] = expandedKeys[i + bytesGenerated - 4];
 		}
-		if(current_size_of_key % key_size == 0){ //make sure that we only call core if we are in the intervals of a word
-			schedule_key(t, rcon_i); //call the core function
-			rcon_i++;
+
+		// Perform the core once for each 16 byte key
+		if (bytesGenerated % 32 == 0) {
+			KeyExpansionCore(tmpCore, rconIteration++);
+		} else if (bytesGenerated % 8 == 4) {
+            for (int i = 0; i < 4; i++) {
+			    tmpCore[i] = sbox[tmpCore[i]];
+		    }
+        }
+
+		for (unsigned char a = 0; a < 4; a++) {
+			expandedKeys[bytesGenerated] = expandedKeys[bytesGenerated - 32] ^ tmpCore[a];
+			bytesGenerated++;
 		}
-		for(int i = 0; i < 4; ++i){
-			//for each byte in the expanded key, store the value of the current expanded key byte - the size of the initial key
-			// XOR'd with t
-			expanded_key[current_size_of_key] = expanded_key[(current_size_of_key - key_size)] ^ t[i];
-			current_size_of_key++;
-		}
+
 	}
 }
 
@@ -258,12 +270,12 @@ int main() {
         0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81, 
         0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
 
-    BYTE ek[60];
+    BYTE ek[240];
 
-    expandKey(key, 32 * sizeof(BYTE), ek, 60 * sizeof(BYTE));
+    KeyExpansion(key, ek);
 
 
-    for (int i = 0; i < 60; i++)
+    for (int i = 0; i < 240; i++)
     {
         printf("%x\n", ek[i]);
     }
