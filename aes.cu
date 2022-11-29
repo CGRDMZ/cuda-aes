@@ -2,6 +2,8 @@
 #include <iostream>
 #include <fstream>
 
+using namespace std;
+
 typedef unsigned char BYTE;
 
 
@@ -199,10 +201,75 @@ void checkCudaErr(cudaError_t err) {
     };
 }
 
+
+void schedule_key(unsigned char *t, int rcon_i){
+	/* Rotate the word, to the left, meaning t[0] = t[1], t[1] = t[2], t[2] = t[3], t[3] = t[0] */ 
+    unsigned char temp;
+    temp = t[0];
+    for (int i = 0; i < 3; ++i){
+        t[i] = t[i+1];
+    }
+    t[3] = temp;
+
+    
+    for(int i = 0; i < 4; ++i){ //iterate over the word, apply sbox to each byte
+    	t[i] = s_box[(t[i])];
+
+    }
+    t[0] = t[0] ^ Rcon_h[rcon_i]; //for only the left-most byte, XOR with the rcon value based on the rcon index
+
+}
+
+/* 	Expands the key
+	Theory implemented from https://en.wikipedia.org/wiki/Rijndael_key_schedule#The_key_schedule
+*/
+void expandKey(unsigned char *key, int key_size, unsigned char *expanded_key, int expanded_key_size){
+	int rcon_i = 1; //rcon iteration value
+	int current_size_of_key = 0; //stores the value of the current key size
+	unsigned char t[4] = {0}; //temp variable of size 4 bytes
+
+
+	for(int i = 0; i < key_size; ++i){ //copy the encryption key as the first 16 bytes in the extended key
+		expanded_key[i] = key[i];
+		current_size_of_key++;
+	}
+	while (current_size_of_key < expanded_key_size){ //loop until we meet the desired key size
+		for(int i = 0; i < 4; ++i){
+			t[i] = expanded_key[(current_size_of_key-4) + i]; //assign the value of the previous 4 bytes to t
+		}
+		if(current_size_of_key % key_size == 0){ //make sure that we only call core if we are in the intervals of a word
+			schedule_key(t, rcon_i); //call the core function
+			rcon_i++;
+		}
+		for(int i = 0; i < 4; ++i){
+			//for each byte in the expanded key, store the value of the current expanded key byte - the size of the initial key
+			// XOR'd with t
+			expanded_key[current_size_of_key] = expanded_key[(current_size_of_key - key_size)] ^ t[i];
+			current_size_of_key++;
+		}
+	}
+}
+
+
 int main() {
 
 
+    BYTE key[32] = {
+        0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81, 
+        0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
 
+    BYTE ek[60];
+
+    expandKey(key, 32 * sizeof(BYTE), ek, 60 * sizeof(BYTE));
+
+
+    for (int i = 0; i < 60; i++)
+    {
+        printf("%x\n", ek[i]);
+    }
+
+    cout << "key ends here-------------------" << endl;
+    
 
 
 
@@ -216,16 +283,26 @@ int main() {
 
     checkCudaErr(cudaMallocManaged(&in, sizeof(BYTE) * n));
     
-    BYTE test[] = {
-        0x19, 0xa0, 0x9a, 0xe9,
-        0x3d, 0xf4, 0xc6, 0xf8, 
-        0xe3, 0xe2, 0x8d, 0x48, 
-        0xbe, 0x2b, 0x2a, 0x08, };
 
+    fstream plainTextFile("./plaintext.txt");
+    char c[16];
+    plainTextFile.read(c, 16 * sizeof(char));
     for (int i = 0; i < 16; i++)
     {
-        in[i] = test[i];
+        in[i] = c[i];
     }
+    
+
+    // BYTE test[] = {
+    //     0x19, 0xa0, 0x9a, 0xe9,
+    //     0x3d, 0xf4, 0xc6, 0xf8, 
+    //     0xe3, 0xe2, 0x8d, 0x48, 
+    //     0xbe, 0x2b, 0x2a, 0x08, };
+
+    // for (int i = 0; i < 16; i++)
+    // {
+    //     in[i] = test[i];
+    // }
 
     // int inc = 0x0;
     // for (int i = 0; i < n; i++)
