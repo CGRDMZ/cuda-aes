@@ -75,26 +75,24 @@ const BYTE s_box[256] = { SBOX };
 
 const BYTE inv_s[256] = {INV_S};
 
-__constant__ BYTE sbox[256];
-__constant__ BYTE inv_sbox[256];
 
 
-__device__ void sub_bytes(BYTE* state) {
+void sub_bytes(BYTE* state) {
     for (int i = 0; i < 16; i++)
     {
-        state[i] = sbox[state[i]];
+        state[i] = s_box[state[i]];
     }
 }
 
 
-__device__ void inv_sub_bytes(BYTE* state) {
+void inv_sub_bytes(BYTE* state) {
     for (int i = 0; i < 16; i++)
     {
-        state[i] = inv_sbox[state[i]];
+        state[i] = inv_s[state[i]];
     }
 }
 
-__device__ void shift_row(BYTE* state) {
+void shift_row(BYTE* state) {
     BYTE out[16];
 
     out[0] = state[0];
@@ -127,7 +125,7 @@ __device__ void shift_row(BYTE* state) {
 }
 
 
-__device__ void inv_shift_row(BYTE* state) {
+void inv_shift_row(BYTE* state) {
     BYTE out[16];
     
     out[0] = state[0];
@@ -159,7 +157,7 @@ __device__ void inv_shift_row(BYTE* state) {
     }
 }
 
-__device__ void mixColumns(BYTE* state) {
+void mixColumns(BYTE* state) {
     for (int i = 0; i < 4; i++)
 	{
 		uint8_t a[4];
@@ -180,9 +178,9 @@ __device__ void mixColumns(BYTE* state) {
 }
 
 
-__device__ void inv_mixColumns(BYTE* state) {}
+void inv_mixColumns(BYTE* state) {}
 
-__device__ void addRoundKey(BYTE* state, BYTE* rk) {
+void addRoundKey(BYTE* state, BYTE* rk) {
     for (int i = 0; i < 4; i++)
     {
         state[i] ^= rk[4*i];
@@ -192,7 +190,7 @@ __device__ void addRoundKey(BYTE* state, BYTE* rk) {
     }
 }
 
-__device__ void printHelper(BYTE* state) {
+void printHelper(BYTE* state) {
     for (int i = 0; i < 4; i++)
     {
         printf("%x ", state[i]);
@@ -204,7 +202,7 @@ __device__ void printHelper(BYTE* state) {
 
 
 
-__device__ void printRoundKey(BYTE* state) {
+void printRoundKey(BYTE* state) {
     printf("Rndky: ");
     for (int i = 0; i < 16; i++)
     {
@@ -214,62 +212,49 @@ __device__ void printRoundKey(BYTE* state) {
     printf("\n");
 }
 
-__device__ void printShiftRow(BYTE* state) {
+void printShiftRow(BYTE* state) {
     printf("Shift row: ");
     printHelper(state);
     printf("\n");
 }
 
-__device__ void printState(BYTE* state) {
+void printState(BYTE* state) {
     printf("State: ");
     printHelper(state);
     printf("\n");
 }
 
 
-__device__ void printMixColumn(BYTE* state) {
+void printMixColumn(BYTE* state) {
     printf("Mix col: ");
     printHelper(state);
     printf("\n");
 }
 
-__global__ void run_aes(BYTE* inp, BYTE* ek, int* blockNumber) {
-    // idx is the global id of the thread
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; 
-         idx < *blockNumber; 
-         idx += blockDim.x * gridDim.x) 
-    {
+void run_aes(BYTE* inp, BYTE* ek, int blockNumber) {
         
-        BYTE* state[16];
-        for (int i = 0; i < 16; i++)
-        {
-            state[i] = inp + idx * 16 + i;
-        }       
+    BYTE* state[16];
+    for (int i = 0; i < 16; i++)
+    {
+        state[i] = inp + blockNumber * 16 + i;
+    }       
 
-        addRoundKey(*state, ek);
+    addRoundKey(*state, ek);
 
-        for (int i = 1; i < 14; i++)
-        {
-            sub_bytes(*state);
-            shift_row(*state);
-            mixColumns(*state);
-            addRoundKey(*state, ek + i * 16);
-        }
-
+    for (int i = 1; i < 14; i++)
+    {
         sub_bytes(*state);
         shift_row(*state);
-        addRoundKey(*state, ek + 224);
-          
-      }
+        mixColumns(*state);
+        addRoundKey(*state, ek + i * 16);
+    }
+
+    sub_bytes(*state);
+    shift_row(*state);
+    addRoundKey(*state, ek + 224);
 
 }
 
-void checkCudaErr(cudaError_t err) {
-    if (err != cudaSuccess)
-    {
-        exit(err);
-    };
-}
 
 
 
@@ -389,7 +374,7 @@ int main() {
     
 
     uintmax_t size = std::filesystem::file_size("./sample-1024-mb.txt");
-    printf("size of the plain text is: %lu", size);
+    printf("size of the plain text is: %lu \n", size);
 
     char* in_buffer = new char[size];
     fstream plaintext("./sample-1024-mb.txt");
@@ -403,20 +388,10 @@ int main() {
     
     
 
-    BYTE* ek;
-    checkCudaErr(cudaMallocManaged(&ek, sizeof(BYTE) * 240));
-
+    BYTE* ek = new BYTE[240];
     expandKey(key, ek);
 
-
-
-    checkCudaErr(cudaMemcpyToSymbol(sbox, s_box, 256 * sizeof(BYTE), 0, cudaMemcpyHostToDevice));
-    checkCudaErr(cudaMemcpyToSymbol(inv_sbox, inv_s,  256 * sizeof(BYTE), 0, cudaMemcpyHostToDevice));
-
-
-
-    BYTE* in;
-    checkCudaErr(cudaMallocManaged(&in, sizeof(BYTE) * size));
+    BYTE* in = new BYTE[size];
 
     for (int i = 0; i < size; i++)
     {
@@ -424,14 +399,8 @@ int main() {
     }
     
     
-    int* devBlockSize;
-    checkCudaErr(cudaMallocManaged(&devBlockSize, sizeof(int)));
 
     int blockCount = size / 16;
-
-    *devBlockSize = blockCount;
-
-    cout << blockCount << endl;
 
     for (int i = 0; i < blockCount; i++)
     {
@@ -447,9 +416,11 @@ int main() {
 
     auto start = chrono::high_resolution_clock::now();
 
-    run_aes<<<1024,1024>>>(in, ek, devBlockSize);
-
-    cudaDeviceSynchronize();
+    for (int i = 0; i < blockCount; i++)
+    {
+        run_aes(in, ek, i);
+    }
+    
 
     auto stop = chrono::high_resolution_clock::now();
 
@@ -473,10 +444,6 @@ int main() {
     // {
     //     output.put(in[i]);
     // }
-    
-    cudaFree(in);
-
-    cudaDeviceReset();
 
     return 0;
 }

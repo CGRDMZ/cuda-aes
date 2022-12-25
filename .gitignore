@@ -1,2 +1,6 @@
 build
 .vscode
+sample*
+aes-cpu
+encrypt.txt
+*.out
